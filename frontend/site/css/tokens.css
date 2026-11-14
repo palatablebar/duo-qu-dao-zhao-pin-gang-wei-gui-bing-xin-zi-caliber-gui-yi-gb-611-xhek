@@ -1,0 +1,49 @@
+/* 设计令牌 · 报纸分类广告：墨黑 + 套红 + 米灰纸底；宋体正文 + 等宽检字。
+   规则：oklch() 色板；禁用纯黑纯白；双字体（思源宋 display / 等宽 mono 检字）；模块化字号。 */
+:root {
+  /* 纸张 */
+  --paper: oklch(0.952 0.013 88);
+  --paper-2: oklch(0.924 0.018 86);
+  --paper-3: oklch(0.894 0.022 84);
+  --paper-edge: oklch(0.86 0.02 82);
+
+  /* 墨色 */
+  --ink: oklch(0.238 0.012 62);
+  --ink-soft: oklch(0.398 0.014 62);
+  --ink-faint: oklch(0.552 0.013 66);
+  --rule: oklch(0.845 0.012 80);
+  --rule-strong: oklch(0.655 0.018 74);
+
+  /* 套红（报纸头版红）与功能色 */
+  --accent: oklch(0.502 0.176 26);
+  --accent-soft: oklch(0.586 0.152 27);
+  --accent-wash: oklch(0.932 0.032 30);
+  --ok: oklch(0.472 0.072 152);
+  --ok-wash: oklch(0.932 0.03 152);
+  --warn: oklch(0.628 0.118 72);
+  --warn-wash: oklch(0.945 0.045 84);
+  --danger: oklch(0.5 0.172 28);
+  --danger-wash: oklch(0.932 0.04 28);
+  --info: oklch(0.498 0.046 232);
+  --info-wash: oklch(0.932 0.02 232);
+
+  /* 双字体：思源宋（标题与正文）+ IBM Plex Mono（检字/数字/小标签） */
+  --font-display: 'Noto Serif SC', 'Songti SC', 'SimSun', serif;
+  --font-body: 'Noto Serif SC', 'Songti SC', 'SimSun', serif;
+  --font-mono: 'IBM Plex Mono', 'SFMono-Regular', ui-monospace, monospace;
+
+  --fs-xs: 0.72rem;
+  --fs-sm: 0.82rem;
+  --fs-md: 0.94rem;
+  --fs-lg: 1.16rem;
+  --fs-xl: clamp(1.6rem, 2.3vw, 2.35rem);
+  --fs-2xl: clamp(2.1rem, 3.6vw, 3.35rem);
+
+  --pad: clamp(14px, 1.7vw, 30px);
+  --rail: 232px;
+  --radius: 2px;
+  --shadow: 0 1px 0 var(--paper-edge), 0 14px 30px -28px oklch(0.3 0.02 60 / 0.5);
+  --ease: cubic-bezier(0.16, 1, 0.3, 1);
+  --hair: 1px solid var(--rule);
+  --double: 3px double var(--rule-strong);
+}
