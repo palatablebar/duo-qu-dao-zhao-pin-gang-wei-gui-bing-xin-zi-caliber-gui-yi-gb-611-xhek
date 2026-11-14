@@ -47,10 +47,19 @@
 | ② | 归一解析（薪资/公司/职位词干） | 原始岗位（+ 口径试算） | `salary_norm`（算法 A）、`normalize_service` / `post_controller`、`salary_controller` | `GET /api/posts`、`GET /api/posts/{id}`、`POST /api/salary/normalize`、`GET /api/salary/samples` |
 | ③ | 指纹与分块 | 归并结果（分块面板） | `dedupe`（算法 B 的 blocking）、`merge_service` / `run_controller` | `POST /api/runs`、`GET /api/runs`、`GET /api/runs/{id}` |
 | ④ | 相似度归并（golden record） | 归并结果 | `dedupe.build_clusters`、`merge_service`、`cluster_service` / `cluster_controller` | `GET /api/clusters`、`GET /api/clusters/{id}` |
-| ⑤ | 人工复核（合并 / 拆分 / 保持） | 复核与导出 | `review_service` / `review_controller` | `GET /api/reviews/pending`、`GET /api/reviews`、`POST /api/reviews` |
-| ⑥ | 结果导出与审计 | 复核与导出（导出面板 + 审计） | `export_service`、`audit_service` / `export_controller`、`audit` 路由 | `GET /api/exports/{clusters,posts,reviews,runs}.csv`、`GET /api/audit` |
+| ⑤ | 人工复核（合并 / 拆分 / 保持） | 复核与导出 | `review_service` / `review_controller` | `GET /api/reviews/pending`、`GET /api/reviews/counts`、`GET /api/reviews`、`POST /api/reviews` |
+| ⑥ | 发布口径与导出审计 | 复核与导出（发布核对 + 导出面板 + 审计） | `publication_service`（发布版本）、`export_service`、`audit_service` / `export_controller`、`audit` 路由 | `GET /api/publications/current`、`GET /api/publications/history`、`GET /api/exports/{clusters,posts,reviews,runs}.csv`、`GET /api/audit` |
 
 > 登录（`auth_service`）、总览（`overview_service`）、限流与审计中间件属于横切能力，不计入业务模块。
+>
+> **发布口径**：复核结论不直接改客户视图，而是固化成「发布版本」（`publications` / `publication_items`）。
+> 客户只读（viewer）的 `/api/clusters`、总览「归并后岗位」与客户清单 `clusters.csv` 都只读当前 active 版本里
+> `status=published` 的行：只有审核通过（`merge` / `keep`）且未过期的岗位进入客户清单；
+> `split` 结论把原合并行撤下，簇内每条原始岗位各自成为独立一行；需要复核但尚无结论的簇只计入待复核。
+> 规则版本（`REVIEW_RULE_VERSION`）或归并阈值变化时 `rule_signature` 改变，旧版本整体 `superseded` 立即失效，
+> 新版本按新规则重建，客户入口、总览、导出在同一时刻切换；旧规则下的复核结论保留为历史记录但不自动沿用，
+> 对应簇重新排队复核。`GET /api/reviews/counts` 返回「待复核 / 可发布 / 已撤回」数量，
+> 与客户列表和 `clusters.csv` 同版本、可逐项核对。
 
 ## 4. 页面（6 个）
 
@@ -60,8 +69,8 @@
 | 2 | `#/overview` | 头版总览 | 头条综述、四个报眼数字、薪资口径分布、渠道来稿量、近 7 日归并、最新运行、成员最多簇 |
 | 3 | `#/channels` | 渠道与采集 | 过滤条 + 检字表（采集计划/已入库/最近采集）+ 详情抽屉 + 登记渠道 |
 | 4 | `#/posts` | 原始岗位 | 薪资原值 vs 归一值对照表 + 岗位详情抽屉 + **算法 A 口径试算** |
-| 5 | `#/clusters` | 归并结果 | 归并簇表 + 成员对照抽屉（相似度/golden）+ 发起归并（阈值）+ 导出 |
-| 6 | `#/reviews` | 复核与导出 | 待复核队列 + 复核历史 + 4 个 CSV 导出 + 审计日志（仅 admin） |
+| 5 | `#/clusters` | 归并结果 | 内部：归并簇表 + 成员对照抽屉（相似度/golden）+ 发起归并 + 导出；客户只读：只列当前发布版本的可检索岗位 |
+| 6 | `#/reviews` | 复核与导出 | 发布口径核对（待复核/可发布/已撤回）+ 待复核队列 + 复核历史 + 4 个 CSV 导出 + 审计日志（仅 admin） |
 
 共用组件：`frontend/site/js/ui.js`（`table` / `drawer` / `field` / `badge` / `barList` / `trendChart`）与
 `frontend/site/js/components.js`（`filterBar` / `clusterTable` / `openClusterDrawer` / `salaryRange`），
@@ -106,14 +115,15 @@ docker compose exec -T backend python -m scripts.seed_demo
 ```text
 backend/
   src/config/{app,database,settings,celery_app}.py
-  src/constants/{enums,roles,limits,error_codes,log_templates}.py
-  src/models/{user,channel,post,cluster,run,review,audit}.py
+  src/constants/{enums,roles,limits,error_codes,log_templates,publish_rules}.py
+  src/models/{user,channel,post,cluster,run,review,publication,audit}.py
   src/schemas/{auth,channel,cluster,run,salary,common}.py
   src/services/
     salary_norm.py       # 算法 A：薪资口径归一（纯函数）
     normalize_service.py # 公司名 / 职位词干 / 城市 / 学历经验归一
     dedupe.py            # 算法 B：分块 + 相似度 + 并查集聚类
-    merge_service.py     # 归并运行落库
+    merge_service.py     # 归并运行落库（重算时按指纹延续复核结论）
+    publication_service.py # 发布版本：复核结论 -> 客户可检索岗位
     channel_service.py post_service.py cluster_service.py review_service.py
     run_service.py overview_service.py export_service.py audit_service.py auth_service.py
   src/controllers/ src/routes/ src/middlewares/
@@ -124,7 +134,7 @@ frontend/site/{index.html,css/{tokens,app}.css,js/{api,app,config,store,ui,compo
 
 ## 9. 环境变量
 
-见 `.env.example`：`COMPOSE_PROJECT_NAME`、`FRONTEND_PORT`、`BACKEND_PORT`、`DB_PORT`、`DB_*`、`JWT_SECRET`、`REDIS_URL`、`SEED_DEMO`、`RATE_LIMIT_*`、`APP_TIMEZONE_OFFSET_MINUTES`。
+见 `.env.example`：`COMPOSE_PROJECT_NAME`、`FRONTEND_PORT`、`BACKEND_PORT`、`DB_PORT`、`DB_*`、`JWT_SECRET`、`REDIS_URL`、`SEED_DEMO`、`RATE_LIMIT_*`、`APP_TIMEZONE_OFFSET_MINUTES`、`REVIEW_RULE_VERSION`（发布口径规则版本，调高即让旧发布版本失效）。
 
 ## 10. 核心算法与口径
 
@@ -170,6 +180,23 @@ frontend/site/{index.html,css/{tokens,app}.css,js/{api,app,config,store,ui,compo
 seed 数据实算：160 条原始岗位 → **118 簇**（21 个多成员簇、最大 3 条、消重 **42** 条），
 其中 21 个多成员簇里有 12 个被标记为待人工复核，8 个簇因过期下线。
 
+### 发布口径｜复核结论 → 客户可检索岗位（`backend/src/services/publication_service.py`）
+
+1. 每个归并结果（或复核结论、规则变化）生成一个发布版本：`rule_signature = 规则版本 + 阈值 + 审核要求`；
+2. 簇的归类互斥且可核对：
+   - **可发布**：无需复核，或已有当前规则下的 `merge` / `keep` 结论，且未过期；
+   - **待复核**：`needs_review=true` 且当前规则下无结论（不进入客户清单）；
+   - **已撤回**：岗位已过期（不论结论），保留在版本内供核对但不进客户清单；
+   - **拆分**：`split` 结论撤下原合并行，簇内每条原始岗位按自身过期状态独立发布 / 撤回；
+3. 客户入口（viewer 的 `/api/clusters`、总览）与 `clusters.csv` 共用 `customer_rows()` 的同一份
+   定义与排序，因此导出逐项数与客户列表一致；对外字段不含精确公司名、`salary_basis` 内部口径与归并指纹；
+4. `state_hash` 覆盖规则、运行、簇状态与有效复核结论；只要它变化就生成新版本并把旧版本标为
+   `superseded`，客户入口、总览、导出在同一事务之后一起切到新版本；
+5. 复核记录永不随归并重算删除（`reviews.cluster_id` 为 SET NULL + 指纹/公司/职位快照），
+   重算后按指纹把结论延续到同指纹的新簇；规则版本变化时旧结论保留为历史但不参与发布。
+
+seed 实算的发布版本：118 簇 = 可发布 **101** + 待复核 **9** + 已撤回 **8**（均为过期）；客户清单 101 行。
+
 ## 11. 共享枚举出现位置
 
 | 枚举 | 后端 | 前端 |
@@ -194,6 +221,9 @@ seed 数据实算：160 条原始岗位 → **118 簇**（21 个多成员簇、�
 ## 13. 已知简化
 
 见 `test-artifacts/gb-611/TESTING.md`「已知差异」：字符集 Jaccard 代替分词、单个簇只保留一条有效复核结论、渠道采集以 seed 数据模拟（未接真实爬虫）。
+
+补充发布口径的已知简化：一个簇只保留一条复核结论（重新提交会覆盖同一簇的结论）；复核结论按「指纹」跨运行延续，
+若两次归并的指纹算法或算法 B 参数变化导致同岗位指纹不同，结论不会自动延续，需重新复核。
 
 ## License
 

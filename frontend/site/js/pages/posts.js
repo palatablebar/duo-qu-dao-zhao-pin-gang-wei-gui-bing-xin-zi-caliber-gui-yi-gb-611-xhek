@@ -5,7 +5,8 @@ import { drawer, emptyState, errorBox, errorMessage, esc, field, fmtTime, kv, ta
 
 const state = { q: '', channelId: '', city: '', salaryStatus: '' };
 
-function openPost(post) {
+function openPost(post, role) {
+  const viewer = role === 'viewer';
   drawer({
     title: `${post.company_raw} · ${post.title_raw}`,
     subtitle: `${post.channel_name || post.channel_code} · ${post.external_id} · ${post.city}`,
@@ -19,11 +20,14 @@ function openPost(post) {
       ['学历 / 经验', `${esc(post.degree_label)} · ${esc(post.experience_label)}`],
       ['发布时间', fmtTime(post.published_at)],
       ['过期时间', fmtTime(post.expire_at)],
-      ['公司归一键', `<span class="mono">${esc(post.company_norm)}</span>`],
-      ['职位词干', `<span class="mono">${esc(post.title_stem)}</span>`],
+      ...(viewer
+        ? []
+        : [
+            ['公司归一键', `<span class="mono">${esc(post.company_norm)}</span>`],
+            ['职位词干', `<span class="mono">${esc(post.title_stem)}</span>`],
+          ]),
     ])}
-    <h3 style="margin:12px 0 6px;font-size:0.98rem">归一说明</h3>
-    <pre class="code">${esc(post.salary_basis || '—')}</pre>
+    ${viewer ? '' : `<h3 style="margin:12px 0 6px;font-size:0.98rem">归一说明</h3><pre class="code">${esc(post.salary_basis || '—')}</pre>`}
     <h3 style="margin:12px 0 6px;font-size:0.98rem">原始岗位文本</h3>
     <pre class="code">${esc(post.raw_text || '—')}</pre>`,
   });
@@ -171,7 +175,7 @@ export const postsPage = {
     view.querySelectorAll('table.data tbody tr').forEach((row) => {
       row.addEventListener('click', () => {
         const post = posts.items.find((item) => String(item.id) === row.dataset.id);
-        if (post) openPost(post);
+        if (post) openPost(post, ctx.user.role);
       });
     });
     view.querySelector('#export-posts')?.addEventListener('click', async () => {

@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from src.models.channel import Channel
 from src.models.cluster import Cluster
 from src.models.post import Post
+from src.models.review import Review
 from src.models.run import Run
 from src.services import dedupe
 from src.utils.timeutil import local_now, local_stamp
@@ -94,6 +95,7 @@ def execute_merge(db: Session, run: Run) -> dict:
     for leftover in existing.values():
         db.delete(leftover)
     db.flush()
+    _reattach_reviews(db, run)
 
     parsed = sum(1 for post, _ in rows if post.salary_status == "parsed")
     negotiable = sum(1 for post, _ in rows if post.salary_status == "negotiable")
@@ -142,3 +144,47 @@ def execute_merge(db: Session, run: Run) -> dict:
     ]
     status = "success" if total and clusters else "partial"
     return {"metrics": metrics, "log": "\n".join(log_lines), "status": status}
+
+
+def _reattach_reviews(db: Session, run: Run) -> int:
+    """把复核结论按指纹延续到本次运行的新簇上（复核记录不丢、不重复人工）。
+
+    归并重算会为同样的岗位生成新的簇行。复核结论按指纹随版本延续：
+    - 结论行本身永不删除（簇被替换时外键 SET NULL，快照字段保留可追溯）；
+    - 同指纹的新簇会挂上这条结论，昨天的「合并 / 拆分 / 保持」不用每天重做；
+    - 规则版本变化时，结论的 rule_signature 与当前不一致，发布层会忽略它并把簇
+      重新排进待复核队列（结论作为历史记录保留）。
+    返回重新挂接的条数。
+    """
+    clusters = {
+        cluster.fingerprint: cluster
+        for cluster in db.scalars(select(Cluster).where(Cluster.run_id == run.id)).all()
+    }
+    if not clusters:
+        return 0
+    # 每个簇最多一条复核结论（uq_reviews_cluster）；先占位再挂接，避免冲突。
+    taken = {
+        review.cluster_id
+        for review in db.scalars(select(Review).where(Review.cluster_id.isnot(None))).all()
+        if review.cluster_id in {cluster.id for cluster in clusters.values()}
+    }
+    attached = 0
+    for review in db.scalars(select(Review).order_by(Review.id)).all():
+        cluster = clusters.get(review.fingerprint)
+        if cluster is None or review.cluster_id == cluster.id or cluster.id in taken:
+            continue
+        if review.cluster_id is not None:
+            current = db.get(Cluster, review.cluster_id)
+            if current is not None and current.run_id == run.id:
+                # 同一次运行里已有别的簇占用这条结论，不抢。
+                continue
+        review.cluster_id = cluster.id
+        review.run_id = run.id
+        taken.add(cluster.id)
+        if review.decision == "split":
+            cluster.status = "merged"
+        elif cluster.status != "expired":
+            cluster.status = "active"
+        db.flush()
+        attached += 1
+    return attached

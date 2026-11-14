@@ -1,8 +1,6 @@
 """原始岗位服务：筛选、详情、薪资口径列对照；viewer 精确公司名脱敏。"""
 from __future__ import annotations
 
-import re
-
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -15,23 +13,10 @@ from src.constants.enums import (
 from src.models.channel import Channel
 from src.models.post import Post
 from src.utils.errors import AppError
+from src.utils.masking import mask_company, mask_text
 from src.utils.timeutil import iso_utc
 
 SALARY_COMPARABLE = ("parsed",)
-
-
-def mask_company(name: str) -> str:
-    cleaned = (name or "").strip()
-    if not cleaned:
-        return "某单位"
-    head = cleaned[0]
-    return f"{head}****（脱敏）"
-
-
-def mask_text(text: str, company_raw: str) -> str:
-    if not text or not company_raw:
-        return text
-    return text.replace(company_raw, mask_company(company_raw))
 
 
 def serialize(post: Post, channel: Channel | None, role: str) -> dict:
@@ -44,7 +29,8 @@ def serialize(post: Post, channel: Channel | None, role: str) -> dict:
         "channel_code": channel.code if channel else None,
         "channel_name": channel.name if channel else None,
         "company_raw": company,
-        "company_norm": post.company_norm,
+        # 归一后的公司名可能还原出精确主体，客户只读不返回。
+        "company_norm": "" if viewer else post.company_norm,
         "title_raw": post.title_raw,
         "title_stem": post.title_stem,
         "city": post.city,
@@ -61,15 +47,14 @@ def serialize(post: Post, channel: Channel | None, role: str) -> dict:
         "monthly_low": post.monthly_low,
         "monthly_high": post.monthly_high,
         "monthly_median": post.monthly_median,
-        "salary_basis": post.salary_basis,
+        # 口径说明含内部折算依据（原值、公式），客户只读不下发。
+        "salary_basis": "" if viewer else post.salary_basis,
         "salary_confidence": round(post.salary_confidence, 2),
         "published_at": iso_utc(post.published_at),
         "expire_at": iso_utc(post.expire_at),
         "raw_text": mask_text(post.raw_text, post.company_raw) if viewer else post.raw_text,
         "created_at": iso_utc(post.created_at),
     }
-    if viewer:
-        payload["salary_basis"] = re.sub(r"【.*?】", "", payload["salary_basis"])
     return payload
 
 

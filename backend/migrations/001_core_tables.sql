@@ -131,3 +131,74 @@ CREATE TABLE audit_logs (
     seed_key        VARCHAR(120) UNIQUE,
     created_at      TIMESTAMP    NOT NULL
 );
+
+-- 发布口径版本：复核结论 -> 客户可检索岗位（客户入口与 clusters.csv 的唯一数据源）
+CREATE TABLE publications (
+    id                       SERIAL PRIMARY KEY,
+    version_no               INTEGER      NOT NULL,
+    run_id                   INTEGER      REFERENCES runs(id) ON DELETE SET NULL,
+    status                   VARCHAR(16)  NOT NULL DEFAULT 'active',
+    rule_version             VARCHAR(64)  NOT NULL DEFAULT '',
+    rule_signature           VARCHAR(200) NOT NULL DEFAULT '',
+    state_hash               VARCHAR(40)  NOT NULL DEFAULT '',
+    threshold                DOUBLE PRECISION NOT NULL DEFAULT 0,
+    reason                   VARCHAR(40)  NOT NULL DEFAULT 'build',
+    clusters_total           INTEGER      NOT NULL DEFAULT 0,
+    pending_count            INTEGER      NOT NULL DEFAULT 0,
+    split_count              INTEGER      NOT NULL DEFAULT 0,
+    published_cluster_count  INTEGER      NOT NULL DEFAULT 0,
+    published_post_count     INTEGER      NOT NULL DEFAULT 0,
+    withdrawn_cluster_count  INTEGER      NOT NULL DEFAULT 0,
+    withdrawn_post_count     INTEGER      NOT NULL DEFAULT 0,
+    published_count          INTEGER      NOT NULL DEFAULT 0,
+    withdrawn_count          INTEGER      NOT NULL DEFAULT 0,
+    expired_count            INTEGER      NOT NULL DEFAULT 0,
+    created_by               VARCHAR(160) NOT NULL DEFAULT 'system',
+    seed_key                 VARCHAR(120) UNIQUE,
+    created_at               TIMESTAMP    NOT NULL,
+    superseded_at            TIMESTAMP
+);
+
+CREATE TABLE publication_items (
+    id                SERIAL PRIMARY KEY,
+    publication_id    INTEGER      NOT NULL REFERENCES publications(id) ON DELETE CASCADE,
+    public_id         VARCHAR(60)  NOT NULL,
+    ordinal           INTEGER      NOT NULL DEFAULT 0,
+    source_kind       VARCHAR(12)  NOT NULL DEFAULT 'cluster',
+    cluster_id        INTEGER      REFERENCES clusters(id) ON DELETE SET NULL,
+    post_id           INTEGER      REFERENCES posts(id) ON DELETE SET NULL,
+    review_id         INTEGER      REFERENCES reviews(id) ON DELETE SET NULL,
+    decision          VARCHAR(12),
+    status            VARCHAR(12)  NOT NULL DEFAULT 'published',
+    withdraw_reason   VARCHAR(40)  NOT NULL DEFAULT '',
+    company_display   VARCHAR(160) NOT NULL DEFAULT '',
+    company_norm      VARCHAR(120) NOT NULL DEFAULT '',
+    title_display     VARCHAR(200) NOT NULL DEFAULT '',
+    title_stem        VARCHAR(160) NOT NULL DEFAULT '',
+    city              VARCHAR(40)  NOT NULL DEFAULT '',
+    salary_status     VARCHAR(16)  NOT NULL DEFAULT 'parsed',
+    salary_low        INTEGER,
+    salary_high       INTEGER,
+    monthly_median    INTEGER,
+    salary_basis      TEXT,
+    months            INTEGER      NOT NULL DEFAULT 12,
+    degree            VARCHAR(16)  NOT NULL DEFAULT 'any',
+    experience        VARCHAR(16)  NOT NULL DEFAULT 'any',
+    published_at      TIMESTAMP,
+    expire_at         TIMESTAMP,
+    channels          JSON,
+    channel_count     INTEGER      NOT NULL DEFAULT 1,
+    member_count      INTEGER      NOT NULL DEFAULT 1,
+    dup_removed       INTEGER      NOT NULL DEFAULT 0,
+    needs_review      BOOLEAN      NOT NULL DEFAULT FALSE,
+    confidence        DOUBLE PRECISION NOT NULL DEFAULT 1,
+    created_at        TIMESTAMP    NOT NULL,
+    CONSTRAINT uq_publication_items_public UNIQUE (publication_id, public_id)
+);
+
+-- reviews 变更：簇被重算替换时结论保留（SET NULL + 快照字段 + 规则签名）
+-- ALTER TABLE reviews ALTER COLUMN cluster_id DROP NOT NULL;
+-- ALTER TABLE reviews ADD COLUMN fingerprint VARCHAR(32) NOT NULL DEFAULT '';
+-- ALTER TABLE reviews ADD COLUMN company_display VARCHAR(160) NOT NULL DEFAULT '';
+-- ALTER TABLE reviews ADD COLUMN title_display VARCHAR(200) NOT NULL DEFAULT '';
+-- ALTER TABLE reviews ADD COLUMN rule_signature VARCHAR(200) NOT NULL DEFAULT '';

@@ -26,7 +26,7 @@ from src.models.post import Post
 from src.models.review import Review
 from src.models.run import Run
 from src.models.user import User
-from src.services import review_service, run_service
+from src.services import publication_service, review_service, run_service
 from src.services.normalize_service import enrich_post_fields
 from src.utils.security import hash_password
 
@@ -213,6 +213,12 @@ def seed_all() -> dict:
         run = ensure_run(db)
         ensure_reviews(db, run)
         ensure_audit(db)
+        publication = publication_service.ensure_current(
+            db,
+            actor="seed@jobmerge.io",
+            seed_key=f"seed-publication-{run.seed_key}",
+            commit=False,
+        )
         runs = db.scalar(select(func.count()).select_from(Run)) or 0
         clusters = db.scalar(
             select(func.count()).select_from(Cluster).where(Cluster.run_id == run.id)
@@ -223,6 +229,12 @@ def seed_all() -> dict:
             f"runs={runs} findings={clusters} pending={pending}"
         )
         print(summary, flush=True)
+        print(
+            f"SEED_PUBLICATION version={publication.version_no} "
+            f"published={publication.published_count} pending={publication.pending_count} "
+            f"withdrawn={publication.withdrawn_count}",
+            flush=True,
+        )
         return {
             "users": users,
             "channels": channels,
@@ -230,6 +242,8 @@ def seed_all() -> dict:
             "runs": runs,
             "clusters": clusters,
             "pending": pending,
+            "publication_version": publication.version_no,
+            "published": publication.published_count,
         }
 
 

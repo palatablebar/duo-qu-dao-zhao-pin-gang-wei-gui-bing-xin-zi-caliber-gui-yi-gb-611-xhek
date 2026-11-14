@@ -1,14 +1,25 @@
 import { api } from '../api.js';
-import { ENUMS, can, decisionTone } from '../config.js';
-import { fmtMoney, fmtPct, openClusterDrawer, sectionHead } from '../components.js';
-import { emptyState, errorBox, errorMessage, esc, fmtTime, table, toast } from '../ui.js';
+import { can, decisionTone } from '../config.js';
+import { fmtMoney, openClusterDrawer, sectionHead } from '../components.js';
+import { emptyState, errorBox, errorMessage, esc, fmtTime, statStrip, table, toast } from '../ui.js';
 
 const EXPORTS = [
-  { path: '/api/exports/clusters.csv', file: 'jobmerge-clusters.csv', label: '归并清单 CSV', hint: '一行一个归并簇，含月薪中位与置信度' },
-  { path: '/api/exports/posts.csv', file: 'jobmerge-posts.csv', label: '岗位口径 CSV', hint: '薪资原值 → 归一值 + 口径说明' },
-  { path: '/api/exports/reviews.csv', file: 'jobmerge-reviews.csv', label: '复核记录 CSV', hint: '结论、复核人与备注' },
+  { path: '/api/exports/clusters.csv', file: 'jobmerge-clusters.csv', label: '客户发布清单 CSV', hint: '与客户检索列表逐项一致，一行一个可发布岗位' },
+  { path: '/api/exports/posts.csv', file: 'jobmerge-posts.csv', label: '原始来稿口径 CSV', hint: '内部用：薪资原值 → 归一值 + 口径说明' },
+  { path: '/api/exports/reviews.csv', file: 'jobmerge-reviews.csv', label: '复核记录 CSV', hint: '结论、复核人与备注（重算后仍保留）' },
   { path: '/api/exports/runs.csv', file: 'jobmerge-runs.csv', label: '运行记录 CSV', hint: '每次归并的输入/产出/不可比占比' },
 ];
+
+/** 发布口径核对条：待复核 / 可发布 / 已撤回 / 已拆分，与客户清单同版本。 */
+function publicationStrip(publication) {
+  if (!publication) return '';
+  return `<div class="panel-body">${statStrip([
+    { label: '发布版本', value: `v${publication.version_no}`, hint: publication.status === 'active' ? '当前生效' : '已失效' },
+    { label: '待复核', value: publication.pending_count, hint: '未审核，不进入客户视图' },
+    { label: '可发布', value: publication.published_count, hint: '客户列表 / 导出行数' },
+    { label: '已撤回', value: publication.withdrawn_count, hint: `其中过期 ${publication.expired_count}` },
+  ])}</div>`;
+}
 
 function auditPanel(items) {
   if (!items) return '';
@@ -43,23 +54,39 @@ export const reviewsPage = {
     let pending;
     let history;
     let audit = null;
+    let counts = null;
     try {
-      const jobs = [api.get('/api/reviews/pending', { limit: 20 }), api.get('/api/reviews', { limit: 20 })];
+      const jobs = [
+        api.get('/api/reviews/pending', { limit: 20 }),
+        api.get('/api/reviews', { limit: 20 }),
+        api.get('/api/reviews/counts'),
+      ];
       if (can(ctx.user.role, 'audit:read')) jobs.push(api.get('/api/audit', { limit: 30 }));
       const results = await Promise.all(jobs);
       pending = results[0];
       history = results[1];
-      audit = results[2]?.items || null;
+      counts = results[2];
+      audit = results[3]?.items || null;
     } catch (err) {
       view.innerHTML = errorBox(errorMessage(err));
       view.querySelector('#retry-btn')?.addEventListener('click', render);
       return;
     }
+    const publication = counts?.publication || null;
 
     view.innerHTML = `
       <div class="workbench">
         <section class="panel">
-          ${sectionHead('05', '待复核队列', `${pending.total} 个簇等待人工确认`)}
+          ${sectionHead('05', '发布口径核对', publication ? `发布版本 v${publication.version_no} · ${publication.rule_version}` : '')}
+          ${publicationStrip(publication)}
+          <div class="panel-note">
+            只有审核通过（确认合并 / 保持原样）且未过期的岗位进入客户视图；拆分结论会把原合并行撤下，
+            簇内每条原始岗位各自成为一行。规则或阈值变化时旧版本立即失效，这里与客户列表按同一版本切换。
+          </div>
+        </section>
+
+        <section class="panel">
+          ${sectionHead('06', '待复核队列', `${pending.total} 个簇等待人工确认`)}
           ${
             pending.items.length
               ? table({
@@ -117,6 +144,12 @@ export const reviewsPage = {
                         label: '复核人',
                         className: 'mono',
                         render: (row) => esc(String(row.reviewer || '').split('@')[0]),
+                      },
+                      {
+                        key: 'cluster',
+                        label: '发布版本',
+                        className: 'tight',
+                        render: (row) => (row.cluster?.status === 'archived' ? '<span class="mono muted">原簇已重算</span>' : ''),
                       },
                       { key: 'updated_at', label: '时间', className: 'tight', render: (row) => fmtTime(row.updated_at) },
                     ],

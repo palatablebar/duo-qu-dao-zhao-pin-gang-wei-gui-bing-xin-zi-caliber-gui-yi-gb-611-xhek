@@ -53,6 +53,16 @@ def execute_run(db: Session, run: Run) -> Run:
         run.metrics = {"error": str(exc)[:300]}
     run.finished_at = utcnow()
     db.flush()
+    if run.status in {"success", "partial"}:
+        # 归并结果落库后立刻重建发布版本：客户入口与导出随即切到新口径。
+        from src.services import publication_service
+
+        publication_service.ensure_current(
+            db,
+            actor=run.operator_email or "system",
+            seed_key=f"seed-publication-{run.seed_key}" if run.seed_key else None,
+            commit=False,
+        )
     return run
 
 

@@ -1,4 +1,14 @@
-"""总览：渠道 / 原始岗位 / 归并簇 / 待复核 / 薪资不可比占比 / worker 心跳。"""
+"""总览：渠道 / 原始岗位 / 归并簇 / 待复核 / 薪资不可比占比 / worker 心跳。
+
+客户只读（viewer）看到的是对外口径：
+
+- 「归并后岗位」= 当前发布版本里可发布的岗位行（拆分簇已展开），不是内部簇总数；
+- 「待复核」= 0（客户不感知内部复核队列），页面上的统计条不出内部数字；
+- 公司名走脱敏，不返回精确公司名与内部薪资依据。
+
+内部角色（admin / analyst）看到的仍是本次归并的完整口径，并额外展示
+「待复核 / 可发布 / 已撤回」三个数，用来和客户列表逐项核对。
+"""
 from __future__ import annotations
 
 import time
@@ -19,8 +29,9 @@ from src.models.cluster import Cluster
 from src.models.post import Post
 from src.models.review import Review
 from src.models.run import Run
-from src.services import review_service, run_service
-from src.services.post_service import mask_company
+from src.services import publication_service, review_service, run_service
+from src.services.publication_service import PUBLISHED
+from src.utils.masking import mask_company
 from src.utils.timeutil import iso_utc, local_now, utcnow
 
 
@@ -52,7 +63,17 @@ def _trend(db: Session) -> list[dict]:
     return points
 
 
+def _publication_mix(db: Session, publication) -> dict:
+    rows = db.execute(
+        select(publication_service.PublicationItem.status, func.count())
+        .where(publication_service.PublicationItem.publication_id == publication.id)
+        .group_by(publication_service.PublicationItem.status)
+    ).all()
+    return {key: int(count) for key, count in rows}
+
+
 def overview(db: Session, role: str) -> dict:
+    viewer = role == Role.VIEWER.value
     channels_total = db.scalar(select(func.count()).select_from(Channel)) or 0
     channels_enabled = db.scalar(select(func.count()).select_from(Channel).where(Channel.enabled.is_(True))) or 0
     posts_total = db.scalar(select(func.count()).select_from(Post)) or 0
@@ -67,6 +88,11 @@ def overview(db: Session, role: str) -> dict:
 
     latest = run_service.latest_run(db)
     counts = run_service.cluster_counts(db, latest.id if latest else None)
+    publication = publication_service.ensure_current(db, actor="system")
+    mix = _publication_mix(db, publication)
+    publication_header = publication_service.serialize_header(
+        publication, db.get(Run, publication.run_id) if publication.run_id else None
+    )
     reviews_total = db.scalar(select(func.count()).select_from(Review)) or 0
 
     channel_rows = db.execute(
@@ -87,8 +113,7 @@ def overview(db: Session, role: str) -> dict:
     )
 
     top_clusters = []
-    if latest:
-        viewer = role == Role.VIEWER.value
+    if latest and not viewer:
         rows = db.scalars(
             select(Cluster)
             .where(Cluster.run_id == latest.id)
@@ -98,7 +123,7 @@ def overview(db: Session, role: str) -> dict:
         top_clusters = [
             {
                 "id": row.id,
-                "company": mask_company(row.company_display) if viewer else row.company_display,
+                "company": row.company_display,
                 "title": row.title_display,
                 "city": row.city,
                 "member_count": row.member_count,
@@ -109,20 +134,65 @@ def overview(db: Session, role: str) -> dict:
             }
             for row in rows
         ]
+    elif viewer:
+        # 客户只读：只取当前发布版本里可发布的岗位，按成员数 / 序号排序。
+        items = db.scalars(
+            select(publication_service.PublicationItem)
+            .where(
+                publication_service.PublicationItem.publication_id == publication.id,
+                publication_service.PublicationItem.status == PUBLISHED,
+            )
+            .order_by(
+                publication_service.PublicationItem.member_count.desc(),
+                publication_service.PublicationItem.ordinal,
+            )
+            .limit(5)
+        ).all()
+        top_clusters = [
+            {
+                "id": item.id,
+                "company": mask_company(item.company_display),
+                "title": item.title_display,
+                "city": item.city,
+                "member_count": item.member_count,
+                "channel_count": item.channel_count,
+                "monthly_median": item.monthly_median,
+                "confidence": round(item.confidence or 0.0, 3),
+                "status_label": "可发布",
+            }
+            for item in items
+        ]
+
+    published_total = mix.get(PUBLISHED, 0)
+    if viewer:
+        clusters_total = published_total
+        clusters_multi = sum(1 for item in top_clusters if item["member_count"] > 1)
+    else:
+        clusters_total = counts["clusters"]
+        clusters_multi = counts["multi"]
 
     return {
         "channels_total": channels_total,
         "channels_enabled": channels_enabled,
         "posts_total": posts_total,
         "posts_expired": posts_expired,
-        "clusters_total": counts["clusters"],
-        "clusters_multi": counts["multi"],
-        "clusters_active": counts["active"],
-        "clusters_expired": counts["expired"],
+        "clusters_total": clusters_total,
+        "clusters_multi": clusters_multi,
+        "clusters_active": counts["active"] if not viewer else published_total,
+        "clusters_expired": counts["expired"] if not viewer else publication.expired_count,
         "dupes_removed": latest.dupes_removed if latest else 0,
-        "needs_review_total": counts["needs_review"],
-        "reviews_total": reviews_total,
-        "pending_total": review_service.pending_total(db, latest.id if latest else None),
+        "needs_review_total": counts["needs_review"] if not viewer else 0,
+        "reviews_total": reviews_total if not viewer else 0,
+        "pending_total": 0 if viewer else review_service.pending_total(db, latest.id if latest else None),
+        "publication": publication_header,
+        "publish_stats": {
+            "pending": publication.pending_count,
+            "published": publication.published_count,
+            "withdrawn": publication.withdrawn_count,
+            "split": publication.split_count,
+            "expired": publication.expired_count,
+            "clusters_total": publication.clusters_total,
+        },
         "salary": {
             "parsed": salary_counts.get("parsed", 0),
             "negotiable": negotiable,
@@ -131,7 +201,10 @@ def overview(db: Session, role: str) -> dict:
             "fail_rate": round(unparsed / posts_total, 4) if posts_total else 0.0,
         },
         "worker_alive": worker_alive(),
-        "latest_run": {
+        # 归并运行明细（阈值 / 连边 / 未解析样例）是内部材料，客户只读不下发。
+        "latest_run": None
+        if viewer
+        else {
             "id": latest.id,
             "run_no": latest.run_no,
             "status": latest.status,
@@ -156,7 +229,9 @@ def overview(db: Session, role: str) -> dict:
             }
             for key in PARSE_STATUS_ORDER
         ],
-        "status_mix": [
+        "status_mix": []
+        if viewer
+        else [
             {"key": key, "label": CLUSTER_STATUS_LABELS.get(key, key), "count": int(count)}
             for key, count in status_rows
         ],

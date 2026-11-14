@@ -54,6 +54,7 @@ services:
       RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE}
       RATE_LIMIT_WRITE_PER_MINUTE: ${RATE_LIMIT_WRITE_PER_MINUTE}
       APP_TIMEZONE_OFFSET_MINUTES: ${APP_TIMEZONE_OFFSET_MINUTES}
+      REVIEW_RULE_VERSION: ${REVIEW_RULE_VERSION:-review-rules-v1}
     ports:
       - "${BACKEND_PORT:-19200}:8000"
     depends_on:
@@ -86,6 +87,7 @@ services:
       REDIS_URL: ${REDIS_URL}
       SEED_DEMO: "false"
       APP_TIMEZONE_OFFSET_MINUTES: ${APP_TIMEZONE_OFFSET_MINUTES}
+      REVIEW_RULE_VERSION: ${REVIEW_RULE_VERSION:-review-rules-v1}
     depends_on:
       db:
         condition: service_healthy

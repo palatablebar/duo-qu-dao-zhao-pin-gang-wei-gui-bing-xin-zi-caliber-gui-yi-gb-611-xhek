@@ -25,7 +25,26 @@ export function parseBadge(row) {
 }
 
 export function clusterStatusBadge(row) {
+  if (row.publish_state) {
+    return row.publish_state === 'published'
+      ? badge('ok', '可发布')
+      : badge('warn', '已撤回');
+  }
   return `<span class="badge ${statusTone(row.status)}">${esc(row.status_label || ENUMS.clusterStatus[row.status] || row.status)}</span>`;
+}
+
+/** 内部复核状态：当前发布版本下的可发布 / 已撤回 / 待复核。 */
+export function publishBadge(row) {
+  let state = row.publish_state;
+  if (!state) {
+    if (row.needs_review && !row.review) state = 'pending';
+    else if (row.status === 'expired') state = 'withdrawn';
+    else state = 'published';
+  }
+  if (state === 'published') return badge('ok', '可发布');
+  if (state === 'withdrawn') return badge('warn', '已撤回');
+  if (state === 'pending') return badge('warn pending', '待复核');
+  return badge('info', state);
 }
 
 export function sectionHead(no, title, meta = '') {
@@ -104,7 +123,7 @@ export function reviewForm(cluster, role) {
   </form>`;
 }
 
-/** 簇详情抽屉：成员对照 + 两两相似度 + 复核表单。簇页与复核页共用。 */
+/** 簇详情抽屉：内部为成员对照 + 相似度 + 复核表单；客户视图只读、已脱敏。 */
 export async function openClusterDrawer(ctx, clusterId, { onDone } = {}) {
   let cluster;
   try {
@@ -113,10 +132,11 @@ export async function openClusterDrawer(ctx, clusterId, { onDone } = {}) {
     toast(errorMessage(err), 'err');
     return;
   }
+  const viewer = ctx.user.role === 'viewer';
   const members = cluster.members || [];
   const memberHtml = members.length
     ? `<div class="table-wrap"><table class="data" style="min-width:520px">
-        <thead><tr><th>渠道</th><th>公司 / 职位</th><th>薪资原值</th><th>归一后月薪</th><th>相似度</th></tr></thead>
+        <thead><tr><th>渠道</th><th>公司 / 职位</th><th>薪资原值</th><th>归一后月薪</th>${viewer ? '' : '<th>相似度</th>'}</tr></thead>
         <tbody>${members
           .map(
             (item) => `<tr class="${item.is_golden ? 'is-golden' : ''}">
@@ -124,33 +144,54 @@ export async function openClusterDrawer(ctx, clusterId, { onDone } = {}) {
               <td><b>${esc(item.company_raw)}</b><div class="cell-sub">${esc(item.title_raw)} · ${esc(item.city)}</div></td>
               <td class="mono">${esc(item.salary_raw)}</td>
               <td class="num">${salaryRange(item.monthly_low, item.monthly_high)}</td>
-              <td class="num">${(Number(item.similarity?.score || 0) * 100).toFixed(1)}%</td>
+              ${viewer ? '' : `<td class="num">${(Number(item.similarity?.score || 0) * 100).toFixed(1)}%</td>`}
             </tr>`,
           )
           .join('')}</tbody></table></div>
-      <div class="panel-note">黄色底为 golden record（字段最全 + 发布最新）；相似度为与 golden 的加权得分。</div>`
+      ${
+        viewer
+          ? '<div class="panel-note">同一岗位来自多个渠道时以「字段最全 + 发布最新」的一条作为展示基准。</div>'
+          : '<div class="panel-note">黄色底为 golden record（字段最全 + 发布最新）；相似度为与 golden 的加权得分。</div>'
+      }`
     : emptyState({ title: '该簇没有关联成员', hint: '可能是历史运行留下的空簇。' });
+
+  const rows = [
+    ['月薪区间', salaryRange(cluster.salary_low, cluster.salary_high)],
+    ['月薪中位', `<b class="tabular">${fmtMoney(cluster.monthly_median)}</b>`],
+    ...(viewer
+      ? []
+      : [
+          ['薪资口径', esc(cluster.salary_basis || '—')],
+          ['置信度', `<span class="mono">${Number(cluster.confidence).toFixed(3)}</span>`],
+          ['发布状态', publishBadge(cluster)],
+          ['待复核', cluster.needs_review ? badge('warn', '是') : '否'],
+          ...(cluster.review_reason ? [['复核触发', esc(cluster.review_reason)]] : []),
+        ]),
+    ['学历 / 经验', `${esc(cluster.degree_label)} · ${esc(cluster.experience_label)}`],
+    ['最近发布', fmtTime(cluster.published_at)],
+    ['过期时间', fmtTime(cluster.expire_at)],
+    ['渠道', `<span class="mono">${esc((cluster.channels || []).join(' / '))}</span>`],
+    ...(viewer
+      ? []
+      : [
+          [
+            '复核结论',
+            cluster.review
+              ? `${esc(ENUMS.decision[cluster.review.decision] || cluster.review.decision)} · ${esc(cluster.review.reviewer || '')}`
+              : '尚未复核',
+          ],
+        ]),
+  ];
 
   const { root, close } = drawer({
     title: `${cluster.company_display} · ${cluster.title_display}`,
-    subtitle: `${cluster.fingerprint} · ${cluster.city} · ${cluster.member_count} 条成员 / ${cluster.channel_count} 个渠道`,
-    body: `${kv([
-      ['月薪区间', salaryRange(cluster.salary_low, cluster.salary_high)],
-      ['月薪中位', `<b class="tabular">${fmtMoney(cluster.monthly_median)}</b>`],
-      ['薪资口径', esc(cluster.salary_basis || '—')],
-      ['置信度', `<span class="mono">${Number(cluster.confidence).toFixed(3)}</span>`],
-      ['状态', clusterStatusBadge(cluster)],
-      ['待复核', cluster.needs_review ? badge('warn', '是') : '否'],
-      ...(cluster.review_reason ? [['复核触发', esc(cluster.review_reason)]] : []),
-      ['学历 / 经验', `${esc(cluster.degree_label)} · ${esc(cluster.experience_label)}`],
-      ['最近发布', fmtTime(cluster.published_at)],
-      ['过期时间', fmtTime(cluster.expire_at)],
-      ['渠道', `<span class="mono">${esc((cluster.channels || []).join(' / '))}</span>`],
-      ['复核结论', cluster.review ? `${esc(ENUMS.decision[cluster.review.decision] || cluster.review.decision)} · ${esc(cluster.review.reviewer || '')}` : '尚未复核'],
-    ])}
+    subtitle: viewer
+      ? `${cluster.city} · ${cluster.member_count} 条渠道来稿 · 岗位号 ${cluster.public_id || ''}`
+      : `${cluster.fingerprint} · ${cluster.city} · ${cluster.member_count} 条成员 / ${cluster.channel_count} 个渠道`,
+    body: `${kv(rows)}
     <h3 style="margin:12px 0 6px;font-size:0.98rem">成员对照</h3>
     ${memberHtml}`,
-    footer: reviewForm(cluster, ctx.user.role),
+    footer: viewer ? '' : reviewForm(cluster, ctx.user.role),
   });
 
   root.querySelector('#review-form')?.addEventListener('submit', async (event) => {
@@ -177,6 +218,7 @@ export async function openClusterDrawer(ctx, clusterId, { onDone } = {}) {
 }
 
 export function clusterTable(rows, role) {
+  const viewer = role === 'viewer';
   return table({
     rows,
     empty: { title: '这个筛选下没有归并簇', hint: '放宽状态筛选，或先去发起一次归并。' },
@@ -205,16 +247,23 @@ export function clusterTable(rows, role) {
         className: 'num',
         render: (row) => Number(row.confidence).toFixed(3),
       },
-      { key: 'status', label: '状态', render: (row) => clusterStatusBadge(row) },
+      {
+        key: 'publish_state',
+        label: viewer ? '状态' : '发布状态',
+        render: (row) => (viewer ? clusterStatusBadge(row) : publishBadge(row)),
+      },
       {
         key: 'needs_review',
-        label: '复核',
-        render: (row) =>
-          row.review
-            ? `<span class="badge ${decisionTone(row.review.decision)}">${esc(ENUMS.decision[row.review.decision] || row.review.decision)}</span>`
-            : row.needs_review
-              ? badge('warn pending', '待复核')
-              : '<span class="mono muted">无需复核</span>',
+        label: viewer ? '岗位号' : '复核结论',
+        render: (row) => {
+          if (viewer) return `<span class="mono muted">${esc(row.public_id || '')}</span>`;
+          if (row.review?.decision) {
+            return `<span class="badge ${decisionTone(row.review.decision)}">${esc(
+              ENUMS.decision[row.review.decision] || row.review.decision,
+            )}</span>`;
+          }
+          return row.needs_review ? badge('warn pending', '待复核') : '<span class="mono muted">无需复核</span>';
+        },
       },
     ],
   });

@@ -11,6 +11,8 @@ class Settings(BaseSettings):
 
     app_name: str = "jobmerge"
     app_title: str = "多渠道招聘岗位归并与薪资口径归一"
+    # 发布口径规则版本：调高即让所有旧发布版本立即失效，待复核簇重新排队。
+    review_rule_version: str = ""
 
     db_kind: str = "postgres"  # postgres | mysql
     db_host: str = "localhost"

@@ -36,6 +36,14 @@ def pending(
     return review_controller.pending(db, limit=page.limit, offset=page.offset)
 
 
+@router.get("/counts")
+def counts(
+    db: Session = Depends(get_db),
+    principal: dict = Depends(require_roles(*READ_ROLES)),
+) -> dict:
+    return review_controller.counts(db)
+
+
 @router.post("", status_code=201)
 def create_review(
     payload: ReviewIn,

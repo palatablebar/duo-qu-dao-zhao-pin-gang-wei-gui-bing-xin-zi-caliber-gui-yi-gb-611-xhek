@@ -13,5 +13,17 @@ from src.models.post import Post  # noqa: E402
 from src.models.run import Run  # noqa: E402
 from src.models.cluster import Cluster  # noqa: E402
 from src.models.review import Review  # noqa: E402
+from src.models.publication import Publication, PublicationItem  # noqa: E402
 
-__all__ = ["Base", "User", "AuditLog", "Channel", "Post", "Run", "Cluster", "Review"]
+__all__ = [
+    "Base",
+    "User",
+    "AuditLog",
+    "Channel",
+    "Post",
+    "Run",
+    "Cluster",
+    "Review",
+    "Publication",
+    "PublicationItem",
+]

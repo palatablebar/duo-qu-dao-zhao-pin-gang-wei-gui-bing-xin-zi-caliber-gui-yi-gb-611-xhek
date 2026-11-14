@@ -9,6 +9,7 @@ from src.routes.exports import router as exports_router
 from src.routes.health import router as health_router
 from src.routes.overview import router as overview_router
 from src.routes.posts import router as posts_router
+from src.routes.publications import router as publications_router
 from src.routes.reviews import router as reviews_router
 from src.routes.runs import router as runs_router
 from src.routes.salary import router as salary_router
@@ -22,6 +23,7 @@ api_router.include_router(posts_router)
 api_router.include_router(clusters_router)
 api_router.include_router(reviews_router)
 api_router.include_router(runs_router)
+api_router.include_router(publications_router)
 api_router.include_router(salary_router)
 api_router.include_router(exports_router)
 api_router.include_router(audit_router)
